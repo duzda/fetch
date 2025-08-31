@@ -9,9 +9,9 @@ import {
   UnableToReadBody,
 } from "../gleam_fetch/gleam/fetch.mjs";
 
-export async function raw_send(request) {
+export async function raw_send(request, options) {
   try {
-    return new Ok(await fetch(request));
+    return new Ok(await fetch(request, options));
   } catch (error) {
     return new Error(new NetworkError(error.toString()));
   }
@@ -164,4 +164,15 @@ export function keysFormData(formData) {
     result.add(key)
   }
   return toList([...result])
+}
+
+// FetchOptions functions.
+
+export function newFetchOptions() {
+  return {};
+}
+
+export function setKeyFetchOptions(fetchOptions, key, value) {
+  fetchOptions[key] = value;
+  return fetchOptions;
 }

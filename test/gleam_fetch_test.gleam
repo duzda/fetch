@@ -1,4 +1,5 @@
 import gleam/fetch.{type FetchError}
+import gleam/fetch/fetch_options
 import gleam/fetch/form_data
 import gleam/http.{Get, Head, Options}
 import gleam/http/request
@@ -193,4 +194,26 @@ fn setup_form_data() {
   |> form_data.append_bits("first-key", <<"first-value-bits":utf8>>)
   |> form_data.append("second-key", "second-value")
   |> form_data.append_bits("second-key", <<"second-value-bits":utf8>>)
+}
+
+pub fn complex_fetch_options_test() {
+  let req =
+    request.new()
+    |> request.set_method(Get)
+    |> request.set_host("test-api.service.hmrc.gov.uk")
+    |> request.set_path("/hello/world")
+    |> request.prepend_header("accept", "application/vnd.hmrc.1.0+json")
+
+  let options =
+    fetch_options.new()
+    |> fetch_options.set_cache(fetch_options.NoStore)
+    |> fetch_options.set_cors(fetch_options.Cors)
+    |> fetch_options.set_credentials(fetch_options.CredentialsOmit)
+    |> fetch_options.set_keepalive(True)
+    |> fetch_options.set_priority(fetch_options.High)
+    |> fetch_options.set_redirect(fetch_options.Follow)
+
+  use result <- promise.await(fetch.send_with(req, options))
+  let assert Ok(_) = result
+  promise.resolve(Nil)
 }
