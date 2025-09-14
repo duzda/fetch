@@ -165,14 +165,3 @@ export function keysFormData(formData) {
   }
   return toList([...result])
 }
-
-// FetchOptions functions.
-
-export function newFetchOptions() {
-  return {};
-}
-
-export function setKeyFetchOptions(fetchOptions, key, value) {
-  fetchOptions[key] = value;
-  return fetchOptions;
-}
