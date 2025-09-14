@@ -1,5 +1,4 @@
 import gleam/dynamic.{type Dynamic}
-import gleam/fetch/fetch_options.{type FetchOptions}
 import gleam/fetch/form_data.{type FormData}
 import gleam/http/request.{type Request}
 import gleam/http/response.{type Response}
@@ -60,6 +59,13 @@ pub fn raw_send(
   request: FetchRequest,
 ) -> Promise(Result(FetchResponse, FetchError))
 
+/// Bridge for Request with FetchOptions between Gleam and JavaScript.
+@external(javascript, "../gleam_fetch_ffi.mjs", "raw_send")
+fn raw_send_converted_options(
+  request: FetchRequest,
+  options: FetchOptionsNative,
+) -> Promise(Result(FetchResponse, FetchError))
+
 /// Call directly `fetch` with a `Request` and `FetchOptions`,
 /// then convert the result back to Gleam.
 /// Let you get back a `FetchResponse` instead of the Gleam
@@ -70,13 +76,24 @@ pub fn raw_send(
 /// |> request.set_host("example.com")
 /// |> request.set_path("/example")
 /// |> fetch.to_fetch_request
-/// |> fetch.raw_send_with(fetch_options.new())
+/// |> fetch.raw_send_options(fetch_options.new())
 /// ```
-@external(javascript, "../gleam_fetch_ffi.mjs", "raw_send")
-pub fn raw_send_with(
+pub fn raw_send_options(
   request: FetchRequest,
   options: FetchOptions,
-) -> Promise(Result(FetchResponse, FetchError))
+) -> Promise(Result(FetchResponse, FetchError)) {
+  raw_send_converted_options(
+    request,
+    FetchOptionsNative(
+      cache: cache_to_string(options.cache),
+      credentials: credentials_to_string(options.credentials),
+      keepalive: options.keepalive,
+      mode: cors_to_string(options.mode),
+      priority: priority_to_string(options.priority),
+      redirect: redirect_to_string(options.redirect),
+    ),
+  )
+}
 
 /// Call `fetch` with a Gleam `Request(String)`, and convert the result back
 /// to Gleam. Use it to send strings or JSON stringified.
@@ -109,7 +126,7 @@ pub fn send(
 /// Use it to send strings or JSON stringified.
 ///
 /// If you're looking for something more low-level, take a look at
-/// [`raw_send_with`](#raw_send_with).
+/// [`raw_send_options`](#raw_send_options).
 ///
 /// ```gleam
 /// let my_data = json.object([#("field", "value")])
@@ -118,15 +135,15 @@ pub fn send(
 /// |> request.set_path("/example")
 /// |> request.set_body(json.to_string(my_data))
 /// |> request.set_header("content-type", "application/json")
-/// |> fetch.send_with(fetch_options.new())
+/// |> fetch.send_options(fetch_options.new())
 /// ```
-pub fn send_with(
+pub fn send_options(
   request: Request(String),
   options: FetchOptions,
 ) -> Promise(Result(Response(FetchBody), FetchError)) {
   request
   |> to_fetch_request
-  |> raw_send_with(options)
+  |> raw_send_options(options)
   |> promise.try_await(fn(resp) {
     promise.resolve(Ok(from_fetch_response(resp)))
   })
@@ -166,7 +183,7 @@ pub fn send_form_data(
 /// decoded as-is on servers.
 ///
 /// If you're looking for something more low-level, take a look at
-/// [`raw_send_with`](#raw_send_with).
+/// [`raw_send_options`](#raw_send_options).
 ///
 /// ```gleam
 /// request.new()
@@ -176,15 +193,15 @@ pub fn send_form_data(
 ///   form_data.new()
 ///   |> form_data.append("key", "value")
 /// })
-/// |> fetch.send_form_data_with(fetch_options.new())
+/// |> fetch.send_form_data_options(fetch_options.new())
 /// ```
-pub fn send_form_data_with(
+pub fn send_form_data_options(
   request: Request(FormData),
   options: FetchOptions,
 ) -> Promise(Result(Response(FetchBody), FetchError)) {
   request
   |> form_data_to_fetch_request
-  |> raw_send_with(options)
+  |> raw_send_options(options)
   |> promise.try_await(fn(resp) {
     promise.resolve(Ok(from_fetch_response(resp)))
   })
@@ -221,7 +238,7 @@ pub fn send_bits(
 /// and you probably want a proper content-type added.
 ///
 /// If you're looking for something more low-level, take a look at
-/// [`raw_send_with`](#raw_send_with).
+/// [`raw_send_options`](#raw_send_options).
 ///
 /// ```gleam
 /// request.new()
@@ -229,15 +246,15 @@ pub fn send_bits(
 /// |> request.set_path("/example")
 /// |> request.set_body(<<"data">>)
 /// |> request.set_header("content-type", "application/octet-stream")
-/// |> fetch.send_bits_with(fetch_options.new())
+/// |> fetch.send_bits_options(fetch_options.new())
 /// ```
-pub fn send_bits_with(
+pub fn send_bits_options(
   request: Request(BitArray),
   options: FetchOptions,
 ) -> Promise(Result(Response(FetchBody), FetchError)) {
   request
   |> bitarray_request_to_fetch_request
-  |> raw_send_with(options)
+  |> raw_send_options(options)
   |> promise.try_await(fn(resp) {
     promise.resolve(Ok(from_fetch_response(resp)))
   })
@@ -399,3 +416,250 @@ pub fn stream_body(
 pub fn read_chunk(
   reader: BodyReader,
 ) -> Promise(Result(Option(BitArray), FetchError))
+
+/// Gleam equivalent of JavaScript
+/// [`RequestInit`](https://developer.mozilla.org/docs/Web/API/RequestInit).
+/// 
+/// The Node target supports only the `redirect` and `priority` options.
+pub opaque type FetchOptions {
+  Builder(
+    cache: Cache,
+    credentials: Credentials,
+    keepalive: Bool,
+    mode: Cors,
+    priority: Priority,
+    redirect: Redirect,
+  )
+}
+
+// Converted internal FetchOptions to be send via JavaScript.
+type FetchOptionsNative {
+  FetchOptionsNative(
+    cache: String,
+    credentials: String,
+    keepalive: Bool,
+    mode: String,
+    priority: String,
+    redirect: String,
+  )
+}
+
+/// Cache options, for details see
+/// [`cache`](https://developer.mozilla.org/docs/Web/API/RequestInit#cache).
+/// 
+/// Change how responses are stored and retrieved from cache.
+pub type Cache {
+  /// Default cache behaviour.
+  ///
+  /// Fresh record will be returned from the cache.
+  /// If the record in cache is stale and server responds with not
+  /// changed, then the value from cache is used. Otherwise makes normal
+  /// request and updates the cache.
+  Default
+  /// Response is not fetched from the cache and not stored in the cache.
+  NoStore
+  /// Response is not fetched from the cache but gets stored.
+  Reload
+  /// If the record in cache is fresh or stale and server responds with not
+  /// changed, then the value from cache is used. Otherwise makes normal
+  /// request and updates the cache.
+  NoCache
+  /// If record is in cache, it is always used. Otherwise makes normal 
+  /// request.
+  ForceCache
+}
+
+fn cache_to_string(cache: Cache) -> String {
+  case cache {
+    Default -> "default"
+    NoStore -> "no-store"
+    Reload -> "reload"
+    NoCache -> "no-cache"
+    ForceCache -> "force-cache"
+  }
+}
+
+/// Credentials options, for details see
+/// [`credentials`](https://developer.mozilla.org/docs/Web/API/RequestInit#credentials).
+/// 
+/// Control whether browser sends credentials with the request and whether
+/// Set-Cookie response headers are respected.
+pub type Credentials {
+  /// Never send credentials or include credentials in the response.
+  CredentialsOmit
+  /// Only send and include credentials for same-origin requests.
+  CredentialsSameOrigin
+  /// Always include credentials.
+  CredentialsInclude
+}
+
+fn credentials_to_string(credentials: Credentials) -> String {
+  case credentials {
+    CredentialsOmit -> "omit"
+    CredentialsSameOrigin -> "same-origin"
+    CredentialsInclude -> "include"
+  }
+}
+
+/// CORS options, for details see
+/// [`mode`](https://developer.mozilla.org/docs/Web/API/RequestInit#mode).
+/// 
+/// Set cross-origin behaviour of a request.
+pub type Cors {
+  /// Disallows cross-origin requests.
+  SameOrigin
+  /// Defaults to
+  /// [CORS](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CORS)
+  /// mechanism.
+  Cors
+  /// Disables CORS for cross-origin requests.
+  NoCors
+  /// Used only by HTML navigation.
+  Navigate
+}
+
+fn cors_to_string(cors: Cors) -> String {
+  case cors {
+    SameOrigin -> "same-origin"
+    Cors -> "cors"
+    NoCors -> "no-cors"
+    Navigate -> "navigate"
+  }
+}
+
+/// Priority options, for details see
+/// [`priority`](https://developer.mozilla.org/docs/Web/API/RequestInit#priority).
+/// 
+/// Increase priority of a request relative to other requests.
+pub type Priority {
+  /// Higher priority.
+  High
+  /// Lower priority.
+  Low
+  /// No preference of priority.
+  Auto
+}
+
+fn priority_to_string(priority: Priority) -> String {
+  case priority {
+    High -> "high"
+    Low -> "low"
+    Auto -> "auto"
+  }
+}
+
+/// Redirect options, for details see
+/// [`redirect`](https://developer.mozilla.org/docs/Web/API/RequestInit#redirect).
+/// 
+/// Change the redirect behaviour of a request.
+pub type Redirect {
+  /// Automatically redirects request.
+  Follow
+  /// Errors out on redirect.
+  Error
+  /// Expects user to handle redirects manually.
+  Manual
+}
+
+fn redirect_to_string(redirect: Redirect) -> String {
+  case redirect {
+    Follow -> "follow"
+    Error -> "error"
+    Manual -> "manual"
+  }
+}
+
+/// Creates new `FetchOptions` object with default values.
+///
+/// Useful if more precise control over fetch is required, such as using
+/// signals, cache options and so on.
+///
+/// ```gleam
+/// let options = fetch_options.new()
+///   |> fetch_options.cache(fetch_options.NoStore)
+/// ```
+pub fn fetch_options() -> FetchOptions {
+  Builder(
+    cache: Default,
+    credentials: CredentialsSameOrigin,
+    keepalive: False,
+    mode: Cors,
+    priority: Auto,
+    redirect: Follow,
+  )
+}
+
+/// Set the
+/// [`cache`](https://developer.mozilla.org/docs/Web/API/RequestInit#cache)
+/// option of `FetchOptions`.
+///
+/// ```gleam
+/// let options = fetch_options.new()
+///   |> fetch_options.cache(fetch_options.NoStore)
+/// ```
+pub fn cache(fetch_options: FetchOptions, which: Cache) -> FetchOptions {
+  Builder(..fetch_options, cache: which)
+}
+
+/// Set the
+/// [`credentials`](https://developer.mozilla.org/docs/Web/API/RequestInit#credentials)
+/// option of `FetchOptions`.
+///
+/// ```gleam
+/// let options = fetch_options.new()
+///   |> fetch_options.credentials(fetch_options.CredentialsOmit)
+/// ```
+pub fn credentials(
+  fetch_options: FetchOptions,
+  which: Credentials,
+) -> FetchOptions {
+  Builder(..fetch_options, credentials: which)
+}
+
+/// Set the
+/// [`keepalive`](https://developer.mozilla.org/docs/Web/API/RequestInit#keepalive)
+/// option of `FetchOptions`.
+///
+/// ```gleam
+/// let options = fetch_options.new()
+///   |> fetch_options.keepalive(True)
+/// ```
+pub fn keepalive(fetch_options: FetchOptions, keepalive: Bool) -> FetchOptions {
+  Builder(..fetch_options, keepalive: keepalive)
+}
+
+/// Set the
+/// [`cors`](https://developer.mozilla.org/docs/Web/API/RequestInit#mode)
+/// option of `FetchOptions`.
+///
+/// ```gleam
+/// let options = fetch_options.new()
+///   |> fetch_options.cors(fetch_options.SameOrigin)
+/// ```
+pub fn cors(fetch_options: FetchOptions, which: Cors) -> FetchOptions {
+  Builder(..fetch_options, mode: which)
+}
+
+/// Set the
+/// [`priority`](https://developer.mozilla.org/docs/Web/API/RequestInit#priority)
+/// option of `FetchOptions`.
+///
+/// ```gleam
+/// let options = fetch_options.new()
+///   |> fetch_options.cors(fetch_options.High)
+/// ```
+pub fn priority(fetch_options: FetchOptions, which: Priority) -> FetchOptions {
+  Builder(..fetch_options, priority: which)
+}
+
+/// Set the
+/// [`redirect`](https://developer.mozilla.org/docs/Web/API/RequestInit#redirect)
+/// option of `FetchOptions`.
+///
+/// ```gleam
+/// let options = fetch_options.new()
+///   |> fetch_options.redirect(fetch_options.Follow)
+/// ```
+pub fn redirect(fetch_options: FetchOptions, which: Redirect) -> FetchOptions {
+  Builder(..fetch_options, redirect: which)
+}
